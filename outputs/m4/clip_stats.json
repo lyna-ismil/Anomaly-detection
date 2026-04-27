@@ -1,0 +1,102 @@
+{
+  "ENGINE_RPM": {
+    "lo": -120.0,
+    "hi": 160.0,
+    "clipped": 15702
+  },
+  "VEHICLE_SPEED": {
+    "lo": 4.7059,
+    "hi": 32.1569,
+    "clipped": 11550
+  },
+  "THROTTLE": {
+    "lo": -12.549,
+    "hi": 75.2941,
+    "clipped": 9655
+  },
+  "ENGINE_LOAD": {
+    "lo": 80.0,
+    "hi": 94.0,
+    "clipped": 59941
+  },
+  "COOLANT_TEMP": {
+    "lo": -8.5938,
+    "hi": 7.8125,
+    "clipped": 15759
+  },
+  "LONG_TERM_FUEL_TRIM": {
+    "lo": -13.2812,
+    "hi": 14.0625,
+    "clipped": 500
+  },
+  "SHORT_TERM_FUEL_TRIM": {
+    "lo": -14.0,
+    "hi": 77.0,
+    "clipped": 9849
+  },
+  "INTAKE_MANIFOLD_PRESSURE": {
+    "lo": -68.2353,
+    "hi": 159.6078,
+    "clipped": 0
+  },
+  "FUEL_TANK_LEVEL": {
+    "lo": 34.1176,
+    "hi": 67.0588,
+    "clipped": 9099
+  },
+  "ABSOLUTE_THROTTLE_B": {
+    "lo": -2.7451,
+    "hi": 41.1765,
+    "clipped": 16459
+  },
+  "ACCELERATOR_POS_D": {
+    "lo": 15.2941,
+    "hi": 53.7255,
+    "clipped": 1031
+  },
+  "ACCELERATOR_POS_E": {
+    "lo": 3.5294,
+    "hi": 33.7255,
+    "clipped": 9611
+  },
+  "COMMANDED_THROTTLE_ACTUATOR": {
+    "lo": 0.0,
+    "hi": 0.0,
+    "clipped": 15759
+  },
+  "FUEL_AIR_EQUIV_RATIO": {
+    "lo": 94.0,
+    "hi": 108.0,
+    "clipped": 15759
+  },
+  "RELATIVE_THROTTLE_POS": {
+    "lo": 7.0,
+    "hi": 84.0,
+    "clipped": 15223
+  },
+  "INTAKE_AIR_TEMP": {
+    "lo": -56.0,
+    "hi": 77.0,
+    "clipped": 0
+  },
+  "TIMING_ADVANCE": {
+    "lo": -32.7001,
+    "hi": 946.2501,
+    "clipped": 0
+  },
+  "CATALYST_TEMPERATURE_BANK1_SENSOR1": {
+    "lo": -268.1,
+    "hi": 925.4,
+    "clipped": 0
+  },
+  "CATALYST_TEMPERATURE_BANK1_SENSOR2": {
+    "lo": 12.87,
+    "hi": 14.648,
+    "clipped": 18132
+  },
+  "CONTROL_MODULE_VOLTAGE": {
+    "lo": -72.9412,
+    "hi": 97.2549,
+    "clipped": 9532
+  }
+}

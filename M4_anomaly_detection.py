@@ -50,6 +50,8 @@ CFG = {
     "ae_lr"                 : 1e-3,
     "if_n_estimators"       : 200,
     "if_contamination"      : 0.05,
+    "ensemble_ae_weight"    : 0.7,      # proportional to AE AUC-ROC
+    "ensemble_if_weight"    : 0.3,      # proportional to IF AUC-ROC
     "anomaly_pct_threshold" : 95,       # percentile -> AE threshold
     "perm_n_repeats"        : 15,       # IF permutation importance repeats
     "random_seed"           : 42,
@@ -559,6 +561,91 @@ def evaluate(scores: np.ndarray, labels: np.ndarray,
     return metrics
 
 
+def evaluate_ensemble(ae_scores, if_scores, labels, ae_threshold):
+    # Step A — Normalize both score arrays to [0, 1]
+    ae_norm = (ae_scores - ae_scores.min()) / (ae_scores.max() - ae_scores.min() + 1e-8)
+    if_norm = (if_scores - if_scores.min()) / (if_scores.max() - if_scores.min() + 1e-8)
+
+    # Step B — Weighted combined score
+    w_ae = CFG["ensemble_ae_weight"]
+    w_if = CFG["ensemble_if_weight"]
+    final_score = (w_ae * ae_norm) + (w_if * if_norm)
+
+    # Step C — Optimal threshold via best F1 from PR curve
+    precision, recall, thresholds = precision_recall_curve(labels, final_score)
+    f1s = 2 * precision * recall / (precision + recall + 1e-8)
+    best_idx = np.argmax(f1s)
+    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else thresholds[-1]
+
+    # Step D — Strict threshold (p85 of normal samples)
+    normal_scores = final_score[labels == 0]
+    strict_threshold = np.percentile(normal_scores, 85)
+
+    # Step E — Compute metrics for both thresholds
+    def _threshold_metrics(threshold):
+        preds = (final_score >= threshold).astype(int)
+        cm = confusion_matrix(labels, preds)
+        tn, fp, fn, tp = cm.ravel()
+        p  = tp / (tp + fp + 1e-8)
+        r  = tp / (tp + fn + 1e-8)
+        f1 = 2 * p * r / (p + r + 1e-8)
+        far = fp / (fp + tn + 1e-8)
+        dr  = tp / (tp + fn + 1e-8)
+        return cm, {
+            "Precision":       round(float(p), 4),
+            "Recall":          round(float(r), 4),
+            "F1":              round(float(f1), 4),
+            "False_Alarm_Rate": round(float(far), 4),
+            "Detection_Rate":  round(float(dr), 4),
+        }
+
+    cm_best, best_metrics   = _threshold_metrics(best_threshold)
+    cm_strict, strict_metrics = _threshold_metrics(strict_threshold)
+
+    # Step F — AUC metrics on combined score
+    auc_roc = roc_auc_score(labels, final_score)
+    auc_pr  = average_precision_score(labels, final_score)
+
+    # Step G — Print results
+    print(f"\n[ensemble] Weighted Soft-Voting (AE={w_ae} / IF={w_if})")
+    print(f"  AUC-ROC         : {auc_roc:.4f}")
+    print(f"  AUC-PR          : {auc_pr:.4f}")
+    print(f"\n  -- Best F1 Threshold ({best_threshold:.4f}) --")
+    for k, v in best_metrics.items():
+        print(f"  {k:<20s}: {v}")
+    print(f"\n  -- Strict Threshold p85 ({strict_threshold:.4f}) --")
+    for k, v in strict_metrics.items():
+        print(f"  {k:<20s}: {v}")
+
+    # Step H — PR curve
+    _plot_pr_curve(precision, recall, auc_pr, "Ensemble")
+
+    # Step I — Confusion matrices for both thresholds
+    _plot_confusion_matrix(cm_best, "Ensemble_BestF1")
+    _plot_confusion_matrix(cm_strict, "Ensemble_Strict")
+
+    # Step J — Score distribution for combined score
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(final_score[labels==0], bins=60, alpha=0.6, label="Normal", density=True)
+    ax.hist(final_score[labels==1], bins=60, alpha=0.6, label="Anomaly", density=True)
+    ax.set_title("Ensemble Final Score Distribution")
+    ax.set_xlabel("Weighted Score"); ax.set_ylabel("Density")
+    ax.legend(); ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(OUT / "ensemble_score_distribution.png", dpi=150)
+    plt.close(fig)
+
+    # Step K — Return results
+    return {
+        "AUC-ROC":             round(float(auc_roc), 4),
+        "AUC-PR":              round(float(auc_pr), 4),
+        "best_f1_threshold":   round(float(best_threshold), 6),
+        "strict_threshold":    round(float(strict_threshold), 6),
+        "best_f1_metrics":     best_metrics,
+        "strict_metrics":      strict_metrics,
+    }
+
+
 # -------------------------------------------------------------
 # SECTION 7 - FEATURE IMPORTANCE
 # -------------------------------------------------------------
@@ -673,7 +760,7 @@ def plot_feature_importance(ae_imp: pd.Series, if_imp: pd.Series):
 # -------------------------------------------------------------
 # SECTION 8 - EXPORT
 # -------------------------------------------------------------
-def export_artifacts(ae_model, ae_threshold, if_model, scaler, features, results):
+def export_artifacts(ae_model, ae_threshold, if_model, scaler, features, results, ensemble_results):
     ae_model.save(OUT / "autoencoder.keras")
     joblib.dump(if_model, OUT / "isolation_forest.pkl")
     joblib.dump(scaler,   OUT / "scaler.pkl")
@@ -683,6 +770,11 @@ def export_artifacts(ae_model, ae_threshold, if_model, scaler, features, results
         "ae_threshold"    : float(ae_threshold),
         "if_contamination": CFG["if_contamination"],
         "results"         : results,
+        "ensemble_weights": {
+            "ae": CFG["ensemble_ae_weight"],
+            "if": CFG["ensemble_if_weight"],
+        },
+        "ensemble_results": ensemble_results,
     }
     with open(OUT / "model_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
@@ -749,6 +841,35 @@ def _plot_model_comparison(results: list[dict]):
     fig.tight_layout(); fig.savefig(OUT / "model_comparison.png", dpi=150); plt.close(fig)
 
 
+def _plot_ensemble_comparison(ae_results, if_results, ensemble_results):
+    metrics = ["AUC-ROC", "AUC-PR", "Best-F1"]
+    x = np.arange(len(metrics))
+    width = 0.25
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    ae_vals = [ae_results[m] for m in metrics]
+    if_vals = [if_results[m] for m in metrics]
+    ens_vals = [ensemble_results["AUC-ROC"], ensemble_results["AUC-PR"],
+                ensemble_results["best_f1_metrics"]["F1"]]
+
+    for i, (vals, label, color) in enumerate([
+        (ae_vals, "Autoencoder", "blue"),
+        (if_vals, "Isolation Forest", "orange"),
+        (ens_vals, "Ensemble Best-F1", "green"),
+    ]):
+        bars = ax.bar(x + i * width - width, vals, width, label=label, color=color)
+        ax.bar_label(bars, fmt="%.3f", padding=3, fontsize=9)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics)
+    ax.set_ylim(0, 1.15)
+    ax.set_ylabel("Score")
+    ax.set_title("Weighted Ensemble vs Individual Models")
+    ax.legend(); ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout(); fig.savefig(OUT / "ensemble_comparison.png", dpi=150); plt.close(fig)
+    print("[ensemble] comparison plot saved")
+
+
 # -------------------------------------------------------------
 # MAIN
 # -------------------------------------------------------------
@@ -795,6 +916,12 @@ def main():
     if_scores  = -if_model.decision_function(X_test_flat)
     if_results = evaluate(if_scores, y_test, "Isolation Forest")
 
+    # 6b. Weighted Soft-Voting Ensemble
+    print("\n-- Weighted Ensemble (AE + IF) -------------------------")
+    ensemble_results = evaluate_ensemble(
+        ae_scores, if_scores, y_test, ae_threshold
+    )
+
     # 7. Feature Importance
     print("\n-- Feature Importance ----------------------------------")
     print("[importance] AE - computing per-feature reconstruction error...")
@@ -809,29 +936,35 @@ def main():
     all_results = [ae_results, if_results]
     _plot_score_distributions(ae_scores, if_scores, y_test)
     _plot_model_comparison(all_results)
+    _plot_ensemble_comparison(ae_results, if_results, ensemble_results)
 
     # 9. Export
-    export_artifacts(ae_model, ae_threshold, if_model, scaler, features, all_results)
+    export_artifacts(ae_model, ae_threshold, if_model, scaler, features, all_results, ensemble_results)
 
     # 10. Final print
     print("\n" + "=" * 65)
     print("RESULTS SUMMARY")
     print("=" * 65)
-    header = f"{'Model':<22} {'AUC-ROC':>9} {'AUC-PR':>9} {'Best-F1':>9}"
-    print(header); print("-" * len(header))
-    for r in all_results:
-        print(f"{r['model']:<22} {r['AUC-ROC']:>9} {r['AUC-PR']:>9} {r['Best-F1']:>9}")
-    print("=" * 65)
+    print(f"\n{'Model':<25} {'AUC-ROC':>9} {'AUC-PR':>9} {'Best-F1':>9}")
+    print("-" * 55)
+    for r in [ae_results, if_results]:
+        print(f"{r['model']:<25} {r['AUC-ROC']:>9} {r['AUC-PR']:>9} {r['Best-F1']:>9}")
+    print(f"{'Ensemble (Best-F1)':<25} {ensemble_results['AUC-ROC']:>9} {ensemble_results['AUC-PR']:>9} {ensemble_results['best_f1_metrics']['F1']:>9}")
+    print(f"{'Ensemble (Strict p85)':<25} {'':>9} {'':>9} {ensemble_results['strict_metrics']['F1']:>9}")
+    print(f"\n[ensemble] Detection Rate  : {ensemble_results['best_f1_metrics']['Detection_Rate']}")
+    print(f"[ensemble] False Alarm Rate: {ensemble_results['best_f1_metrics']['False_Alarm_Rate']}")
     print(f"\nAll outputs -> {OUT.resolve()}")
     print("\nKey output files:")
-    print("  feature_importance.png    <- which features drive anomaly detection")
-    print("  feature_importance.csv    <- full ranked table (AE + IF side by side)")
-    print("  correlation_matrix.png    <- feature correlation after filtering")
-    print("  model_comparison.png      <- AE vs IF metrics bar chart")
-    print("  clip_stats.json           <- IQR clipping bounds per feature")
-    print("  autoencoder.keras         <- deploy to Raspberry Pi")
-    print("  isolation_forest.pkl      <- deploy to Raspberry Pi")
-    print("  model_meta.json           <- threshold + feature list for inference")
+    print("  feature_importance.png          <- which features drive anomaly detection")
+    print("  feature_importance.csv          <- full ranked table (AE + IF side by side)")
+    print("  correlation_matrix.png          <- feature correlation after filtering")
+    print("  model_comparison.png            <- AE vs IF metrics bar chart")
+    print("  ensemble_comparison.png         <- weighted ensemble vs individual models")
+    print("  ensemble_score_distribution.png <- how well scores separate normal/anomaly")
+    print("  clip_stats.json                 <- IQR clipping bounds per feature")
+    print("  autoencoder.keras               <- deploy to Raspberry Pi")
+    print("  isolation_forest.pkl            <- deploy to Raspberry Pi")
+    print("  model_meta.json                 <- threshold + feature list for inference")
 
 
 if __name__ == "__main__":
